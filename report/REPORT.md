@@ -1,87 +1,76 @@
 # Báo cáo bài thực hành Ngày 1 – Đọc prediction YOLO11 để hiểu định dạng nhãn
 
-**Ngày chạy:** 6/11/2026
+**Ngày chạy:** 06/11/2026
 
-**Runtime Colab:** GPU (`Device: cuda`)
+**Runtime Colab:** GPU (cuda)
 
-**Python / PyTorch / Ultralytics:** Python 3.13.16 / PyTorch 2.11.0+cu130 / Ultralytics 8.4.145
+**Python / PyTorch / Ultralytics:** 3.13.16 / 2.11.0+cu130 / 8.4.145
 
-**Checkpoint:** `yolo11n-cls.pt`, `yolo11n.pt`, `yolo11n-seg.pt` (cả ba đều `PASS` kiểm tra SHA-256)
+**Checkpoint:** `yolo11n-cls.pt`, `yolo11n.pt`, `yolo11n-seg.pt`
 
-**Ngưỡng detection/segmentation dùng khi tạo JSON:** `0.35` (không đổi)
+**Ngưỡng detection/segmentation dùng khi tạo JSON:** `0.35`
 
-**Thay đổi so với notebook nguồn:** Không đổi checkpoint, threshold hay mã tạo prediction. Chỉ thêm một ô `drive.mount('/content/drive')` để lưu file lên Google Drive; ô này không ảnh hưởng tới kết quả JSON/PNG.
+**Thay đổi so với notebook nguồn:** Không đổi checkpoint, threshold hay code chạy model. Chỉ thêm một ô `drive.mount` để lưu file ra Google Drive, ô này không ảnh hưởng đến JSON/PNG.
 
 ## 1. Phân loại ảnh
 
-Nguồn: `classification_predictions.json`, `sample_id = traffic`, `rank = 1`.
+1. `class_id`=468 ; `class_name`=cab ; `rank`=1 ; `score`=0.510915 ; `taxonomy_name`=ImageNet-1K
 
-1. **Record hạng 1:** `class_id`=468 ; `class_name`=cab ; `rank`=1 ; `score`=0.510915 ; `taxonomy_name`=ImageNet-1K
-   (Top-5 còn lại: minibus 0.164, police_van 0.086, recreational_vehicle 0.054, streetcar 0.048.)
+   Các hạng sau lần lượt là minibus (0.164), police_van (0.086), recreational_vehicle (0.054), streetcar (0.048).
 
-2. Record này nói về **cả bức ảnh**. Record không có `bbox_xyxy` hay polygon, chỉ có một danh sách top-5 cho mỗi `sample_id`, và tổng score của các lớp là phân phối xác suất trên toàn ảnh. Ảnh `traffic` có nhiều xe buýt và ô tô, nhưng model chỉ trả về **một nhãn cho cả cảnh**, không cho biết "cab" nằm ở đâu.
+2. Record này nói về cả bức ảnh. Trong record không có tọa độ box hay polygon nào, mỗi ảnh chỉ có 5 dòng xếp hạng lớp. Ảnh `traffic` có rất nhiều xe buýt và ô tô nhưng model chỉ đưa ra một nhãn chung, không chỉ ra "cab" nằm ở đâu.
 
-3. Danh sách lớp **đi kèm taxonomy/checkpoint**: `yolo11n-cls.pt` được huấn luyện trên ImageNet-1K nên chỉ chọn được trong 1000 lớp của ImageNet. Model không tự nghĩ ra tên lớp mới. Vì vậy với ảnh đường phố COCO, model ra "cab"/"streetcar": đó là những lớp gần nhất mà taxonomy ImageNet có, không phải nhãn "traffic scene".
+3. Danh sách lớp đi kèm checkpoint. `yolo11n-cls.pt` được train trên ImageNet-1K nên chỉ chọn được trong 1000 lớp của bộ này. Ảnh đường phố mà ra "cab" hay "streetcar" là vì ImageNet không có lớp nào kiểu "cảnh giao thông", model chỉ lấy lớp gần nhất nó có.
 
-4. Cùng một con số `class_id` mang nghĩa khác nhau ở mỗi taxonomy: `class_id=2` trong COCO-80 là `car`, còn trong ImageNet-1K lại là `great_white_shark`. Một chiếc xe taxi được gọi là `car` (id 2) ở COCO nhưng là `cab` (id 468) ở ImageNet. Tên lớp cũng chia khác nhau, vd. COCO chỉ có `bus`, còn ImageNet tách thành `minibus`, `trolleybus`, `school_bus`. Ghi đủ ba trường thì:
-   - `class_id` cho máy đọc chính xác, không phụ thuộc chính tả/ngôn ngữ của tên;
-   - `class_name` cho người đọc kiểm tra nhanh;
-   - `taxonomy_name` cho biết id/tên đó thuộc bộ lớp nào, để không gộp nhầm dữ liệu từ hai taxonomy và để truy vết khi đổi phiên bản.
+4. Vì cùng một con số có thể mang nghĩa khác nhau ở taxonomy khác nhau. Ví dụ `class_id`=2 bên COCO-80 là `car`, còn bên ImageNet-1K là `great_white_shark`. Tên lớp cũng chia khác nhau: COCO chỉ có `bus`, ImageNet thì tách ra `minibus`, `trolleybus`, `school_bus`. Nếu chỉ ghi tên hoặc chỉ ghi id thì khi gộp dữ liệu từ nhiều nguồn rất dễ nhầm. Có đủ id, tên và taxonomy thì máy đọc được, người đọc cũng kiểm tra được.
 
-5. Guideline cần nói rõ:
-   - **Tiêu chí chọn lớp chính**: vd. "chọn vật/chủ đề chiếm diện tích lớn nhất hoặc là chủ thể trung tâm của ảnh"; hoặc theo mục đích dự án (vd. ưu tiên phương tiện giao thông).
-   - **Thứ tự ưu tiên** khi có nhiều ứng viên ngang nhau (vd. bus > car > cab).
-   - **Ví dụ đúng/sai** cho cảnh nhiều vật (như ảnh `traffic`: nhiều xe buýt + ô tô).
-   - **Khi nào escalation** (vd. không có lớp nào trong taxonomy phù hợp, hoặc hai chủ thể ngang nhau) thay vì tự đoán.
+5. Guideline cần ghi rõ cách chọn lớp chính khi ảnh có nhiều vật, ví dụ chọn vật chiếm diện tích lớn nhất hoặc vật ở trung tâm, hoặc ưu tiên theo mục đích dự án. Nên có thứ tự ưu tiên khi hai lớp ngang nhau (ví dụ bus trước car), kèm vài ảnh mẫu làm đúng/làm sai. Cũng cần nói khi nào phải hỏi Lab Coach, ví dụ không có lớp nào trong taxonomy hợp với ảnh.
 
-6. `score` chỉ là mức "tin" của model, không phải sự thật. Ở đây top-1 "cab" chỉ có 0.51, tức model gần như phân vân một nửa; và nhãn đúng theo nghĩa thông thường của cảnh có thể là "bus"/"streetcar" chứ không phải "cab". Model có thể **tự tin mà vẫn sai**, và score cao không có nghĩa nhãn đúng theo guideline. Nếu lấy prediction làm ground truth thì lỗi của model sẽ quay lại làm dữ liệu huấn luyện. Ground truth phải do người gán theo guideline và có reviewer kiểm tra.
+6. Score chỉ cho biết model tin vào đáp án của nó đến đâu, không cho biết đáp án đó đúng. Ở ảnh này top-1 chỉ được 0.51, trong khi nhìn ảnh thì xe buýt mới là thứ chiếm nhiều diện tích nhất, không phải taxi. Model hoàn toàn có thể tự tin mà vẫn sai. Nếu lấy prediction làm ground truth thì lỗi của model sẽ bị đưa ngược lại vào dữ liệu train.
 
 ## 2. Phát hiện vật thể
 
-Nguồn: `detection_predictions.json` + `visuals/detection_predictions.png`, `sample_id = kitchen` (ảnh 640×427).
+Record được chọn: người đầu bếp đứng bên phải ảnh `kitchen` (ảnh 640×427).
 
-1. **Record được chọn** (người đứng nấu bên phải ảnh):
-   `class_name`=person (`class_id`=0) ; `score`=0.912625 ; `bbox_xyxy`=[385.33, 69.24, 498.92, 348.92] ; `bbox_width`=113.58 ; `bbox_height`=279.68
+1. `class_name`=person ; `score`=0.912625 ; `bbox_xyxy`=[385.33, 69.24, 498.92, 348.92] ; `bbox_width`=113.58 ; `bbox_height`=279.68
 
-2. **Giải thích box bằng lời** (`[x_min, y_min, x_max, y_max]`, đơn vị pixel, gốc (0,0) ở góc trên-trái của ảnh 640×427):
-   - Góc trên-trái ở điểm **(385.33, 69.24)**: cách mép trái ảnh ~385 px (khoảng 60% bề ngang) và cách mép trên ~69 px, tức ngay trên đỉnh đầu người, phía khuỷu tay trái.
-   - Góc dưới-phải ở điểm **(498.92, 348.92)**: dưới gót chân, sát mép ngoài khuỷu tay phải; cách đáy ảnh còn ~78 px.
-   - Hộp **rộng 113.58 px** (= 498.92 − 385.33) và **cao 279.68 px** (= 348.92 − 69.24). Hộp cao gần gấp 2.5 lần bề rộng, đúng dáng một người đứng thẳng, và chiếm khoảng 65% chiều cao ảnh.
+2. Gốc tọa độ (0, 0) là góc trên-trái ảnh, đơn vị pixel. Góc trên-trái của box ở điểm (385.33, 69.24), tức cách mép trái khoảng 385 px và cách mép trên khoảng 69 px, ngay trên đầu người. Góc dưới-phải ở (498.92, 348.92), ngang gót chân, còn cách đáy ảnh khoảng 78 px. Box rộng 113.58 px và cao 279.68 px, cao gấp khoảng 2.5 lần chiều rộng, đúng với dáng người đứng.
 
-3. **So sánh ngưỡng** (output ô so sánh trong notebook):
-   - `0.20` → **17** prediction: person, bowl, bowl, oven, oven, person, bowl, bowl, cup, cup, bowl, spoon, potted plant, spoon, dining table, spoon, bottle
-   - `0.35` → 11 prediction (ngưỡng dùng cho JSON)
-   - `0.60` → **6** prediction: person, bowl, bowl, oven, oven, person
+3. So sánh ngưỡng 0.20 và 0.60:
+   - 0.20: 17 prediction (person, bowl, bowl, oven, oven, person, bowl, bowl, cup, cup, bowl, spoon, potted plant, spoon, dining table, spoon, bottle)
+   - 0.60: 6 prediction (person, bowl, bowl, oven, oven, person)
 
-4. Khi hạ ngưỡng 0.60 → 0.20, số hộp tăng từ 6 lên 17. Reviewer phải:
-   - kiểm tra từng hộp mới có phải vật thật không (false positive), vd. `dining table` cho bàn làm bếp, `potted plant` cho bó lá thơm treo khô, 3 `spoon` nhỏ khó nhìn;
-   - phân biệt **hộp trùng** với **hai vật sát nhau**. Ví dụ: trên PNG ở ngưỡng 0.35, nhãn hai hộp `cup` in đè lên nhau thành "cucup 0.45", nhìn như trùng hộp. Nhưng JSON cho thấy đó là hai cốc riêng: `cup 0.451108` ở [143.52, 268.13, 172.93, 301.81] và `cup 0.381542` ở [119.95, 272.2, 141.78, 304.16], hai hộp không giao nhau. Ngược lại, `bowl 0.381215` [0.32, 305.02, 87.69, 371.32] và `bowl 0.719063` [32.65, 342.12, 100.16, 384.93] **có giao nhau** (IoU ≈ 0.23; phần giao chiếm ~56% hộp nhỏ hơn). Nhìn ảnh thì đây là hai đồ vật khác nhau (khay bánh phía sau và đĩa sứ trắng phía trước), nên reviewer cần mở ảnh xác nhận chứ không gộp hai hộp theo mức chồng lấn;
-   - kiểm tra lại **lớp** có đúng taxonomy/guideline không (vd. hai vật nhỏ trên kệ `bowl 0.701282` [155.02, 168.67, 182.38, 184.18] và `bowl 0.464904` [155.76, 113.58, 173.98, 130.13] trông giống cốc/hũ hơn là bát);
-   - kiểm tra độ khít của box. Tóm lại: nhiều hộp hơn thì ít bỏ sót hơn nhưng tốn thời gian review hơn và nhiều nhiễu hơn.
+   Ngưỡng 0.35 dùng cho JSON thì có 11 prediction.
 
-5. **Quy tắc box:**
-   > Vẽ **một** hộp chữ nhật cho **mỗi** vật thể thuộc taxonomy, bao khít **phần nhìn thấy được** của vật (cạnh hộp chạm mép ngoài cùng của pixel thuộc vật, không chừa nền thừa quá vài pixel). Không vẽ hai hộp cho cùng một vật. Không ước đoán phần bị che khuất nằm ngoài khung hoặc sau vật khác.
+4. Hạ ngưỡng thì có thêm nhiều box, nên reviewer phải soi kỹ hơn:
+   - Kiểm tra box mới có đúng là vật thật không. Từ 0.35 xuống 0.20 có thêm 3 `spoon`, `potted plant`, `dining table` và `bottle`, toàn là prediction score thấp. Notebook không lưu ảnh ở ngưỡng 0.20 nên reviewer phải mở ảnh gốc để xác nhận từng cái. Đối chiếu với ảnh segmentation thì `potted plant` nhiều khả năng là bó lá khô treo ở góc trên bên trái, không phải chậu cây.
+   - Phân biệt box trùng với hai vật đứng sát nhau. Trên PNG, nhãn của hai box `cup` bị in đè lên nhau thành "cucup 0.45", nhìn tưởng trùng. Mở JSON ra thì đó là hai cốc riêng: `cup 0.451108` [143.52, 268.13, 172.93, 301.81] và `cup 0.381542` [119.95, 272.2, 141.78, 304.16], hai box không giao nhau. Còn `bowl 0.381215` [0.32, 305.02, 87.69, 371.32] và `bowl 0.719063` [32.65, 342.12, 100.16, 384.93] thì có giao nhau (IoU khoảng 0.23), nhưng nhìn ảnh là hai đồ khác nhau (khay bánh phía sau và đĩa sứ trắng phía trước).
+   - Kiểm tra lớp có đúng không. Hai vật nhỏ trên kệ được gán `bowl 0.701282` và `bowl 0.464904` nhưng nhìn giống cốc hoặc hũ hơn.
+   - Kiểm tra box có ôm khít vật không.
 
-6. **Vật bị cắt mép:** ở mép trái ảnh, giữa bàn, chỉ thấy **một cánh tay/bàn tay** của người thứ hai. Model gán `person 0.610931` với `bbox_xyxy`=[0.12, 263.18, 61.55, 310.78]: `x_min` ≈ 0 nghĩa là hộp chạm mép trái ảnh, và hộp chỉ rộng 61.44 × cao 47.59 px, chỉ bao cánh tay. Mình sẽ **viết thành quy tắc trong guideline**: tình huống "người bị cắt mép ảnh, chỉ thấy một phần cơ thể" lặp lại rất thường xuyên trong nhiều ảnh, nên cần một quy tắc thống nhất cho mọi annotator, vd. "vẫn gán `person` nếu nhận ra được là bộ phận người; box chỉ bao phần nhìn thấy". Chỉ **escalation** cho Lab Coach nếu phần nhìn thấy quá nhỏ/mờ đến mức không chắc là người, hoặc dự án có yêu cầu riêng (vd. bỏ qua người bị cắt quá X%) mà guideline chưa nói.
+5. Quy tắc box: mỗi vật thuộc taxonomy vẽ đúng một box, box ôm khít phần nhìn thấy được của vật, không chừa nền thừa và không đoán thêm phần bị che hoặc nằm ngoài khung ảnh.
+
+6. Ở mép trái ảnh, chỗ cái bàn, chỉ thấy một cánh tay của người thứ hai, phần còn lại nằm ngoài khung. Model gán `person 0.610931` với box [0.12, 263.18, 61.55, 310.78]. `x_min` gần bằng 0 cho thấy box chạm mép ảnh, và box chỉ rộng khoảng 61 px, cao 48 px.
+
+   Trường hợp này nên viết thành quy tắc trong guideline, vì người bị cắt mép ảnh gặp rất thường xuyên, cần mọi người làm giống nhau: vẫn gán `person` nếu nhận ra được đó là người, box chỉ bao phần nhìn thấy. Chỉ hỏi Lab Coach khi phần nhìn thấy quá nhỏ hoặc quá mờ, không chắc có phải người không.
 
 ## 3. Phân đoạn theo từng đối tượng
 
-Nguồn: `segmentation_predictions.json` + `visuals/segmentation_prediction.png`, `sample_id = kitchen`.
+Record được chọn: cùng người đầu bếp như ở mục 2.
 
-1. **Record được chọn** (người đứng bên phải):
-   `instance_id`=kitchen-001 ; `class_name`=person (`class_id`=0) ; `score`=0.899318 ; `polygon_point_count`=348 ; 5 điểm đầu của `polygon_xy`=[[446.0, 70.0], [445.0, 71.0], [444.0, 71.0], [443.0, 72.0], [442.0, 72.0]]
-   (`bbox_xyxy` của mask này = [385.45, 66.44, 498.02, 348.58].)
+1. `instance_id`=kitchen-001 ; `class_name`=person ; `score`=0.899318 ; `polygon_point_count`=348 ; 5 điểm đầu của `polygon_xy`=[[446.0, 70.0], [445.0, 71.0], [444.0, 71.0], [443.0, 72.0], [442.0, 72.0]]
 
-2. **Polygon so với box:** box chỉ cho biết vật nằm trong hình chữ nhật [385.45, 66.44, 498.02, 348.58]. Polygon dùng **348 điểm** để vẽ **đường viền thật** của người. Ví dụ 5 điểm đầu (446,70) → (442,72) đi dần sang trái và xuống dưới, tức là đang men theo vòm đỉnh đầu, chứ không phải một cạnh thẳng như box. Nhờ đó polygon tách được khoảng trống giữa hai chân, giữa tay và thân, vốn vẫn nằm trong box. Polygon cũng cho biết diện tích thật và phần bị che. Ví dụ mask `dining table` (`kitchen-005`) có tới 598 điểm, vì biên bàn dài và bị nhiều đồ vật đặt trên bàn cắt ngang. Trong khi đó, bát nhỏ trên kệ `kitchen-010` chỉ cần 12 điểm.
+2. Box chỉ là một hình chữ nhật [385.45, 66.44, 498.02, 348.58] quanh người. Polygon thì dùng 348 điểm đi theo viền thật của người. Ví dụ 5 điểm đầu đi từ (446, 70) sang (442, 72), tức là đang men theo đỉnh đầu chứ không phải một cạnh thẳng. Trên `segmentation_prediction.png`, box của người này còn chứa cả phần tường, mấy cây cán bột treo sau đầu và khoảng trống hai bên hông, nhưng mask chỉ tô phần thân người. Vật càng to và viền càng phức tạp thì càng cần nhiều điểm: mask `dining table` (kitchen-005) có 598 điểm, còn cái bát nhỏ trên kệ (kitchen-010) chỉ có 12 điểm.
 
-3. **`instance_id`** là mã định danh **riêng cho từng vật trong một ảnh** của output lab, dùng để phân biệt hai vật **cùng lớp**. Ví dụ trong JSON: `kitchen-001` (person, 0.899318) và `kitchen-009` (person, 0.431438, cánh tay ở mép trái) có cùng `class_id`=0 nhưng `instance_id` và polygon khác nhau. Tương tự, 4 cái bát `kitchen-002/003/006/010` đều có `class_id`=45.
-   - **Không phải class ID**: class ID cho biết vật *là gì* (0 = person, 45 = bowl); instance_id cho biết *cái nào*.
-   - **Không phải tracking ID**: số chỉ được đánh theo thứ tự output trong một lần chạy trên một ảnh (ở đây theo score giảm dần: 001 = 0.899, 002 = 0.736, …). Chạy lại, đổi ngưỡng hay sang khung hình khác thì cùng một người có thể nhận số khác. Vì vậy không dùng instance_id để theo dõi một vật qua nhiều ảnh.
+3. `instance_id` dùng để phân biệt từng vật trong một ảnh, kể cả khi chúng cùng lớp. Ví dụ ảnh `kitchen` có hai person là `kitchen-001` (người đầu bếp, 0.899) và `kitchen-009` (cánh tay ở mép trái, 0.431). Cả hai đều có `class_id`=0 nhưng mỗi cái một `instance_id` và một polygon riêng. Bốn cái bát `kitchen-002/003/006/010` cũng vậy.
 
-4. **Quy tắc vẽ biên mask:**
-   > Đường biên polygon đi theo **mép ngoài cùng của phần nhìn thấy** của vật, mỗi instance một polygon riêng. Không tô lẹm sang nền hoặc vật bên cạnh. Lỗ hở nhìn xuyên được (giữa hai chân, giữa tay và thân) **không** thuộc mask. Phần bị vật khác che **không** vẽ; vật đứng trước giữ nguyên mask, vật phía sau chỉ lấy phần lộ ra. Hai mask không được chồng pixel lên nhau.
+   Nó không phải class ID vì class ID cho biết vật đó là gì, còn `instance_id` cho biết là cái nào. Nó cũng không phải tracking ID vì số này chỉ đánh theo thứ tự output trong một lần chạy (ở đây xếp theo score giảm dần: 001 là 0.899, 002 là 0.736…). Chạy lại, đổi ngưỡng hoặc sang ảnh khác thì cùng một người có thể bị đánh số khác, nên không dùng nó để theo dõi một vật qua nhiều frame được.
 
-5. **Chỗ khó:** trên mặt bàn bên trái, **hai bát chạm/chồng lên nhau**: `kitchen-006` (bowl 0.528201, box [0.11, 302.85, 85.7, 370.15]) và `kitchen-002` (bowl 0.735744, box [31.44, 343.77, 100.89, 385.55]). Hai box giao nhau trong vùng x ≈ 31–86, y ≈ 344–370. Cả hai lại nằm trên mask `kitchen-005` (dining table 0.578416). Mask `kitchen-007` (oven 0.489667) cũng bị loang, có mảng tối lẹm ra ngoài lò. Với hai vật chạm nhau, mình dùng **guideline**: đây là tình huống lặp lại, có thể giải bằng quy tắc ở câu 4 (vật trước giữ mask, vật sau lấy phần lộ ra, không chồng pixel). Riêng việc bàn làm bếp bị gán `dining table` (COCO-80 không có lớp "bàn bếp") là **câu hỏi về taxonomy** nên mình **escalation** cho Lab Coach, không tự quyết định gán `dining table` hay bỏ qua.
+4. Quy tắc vẽ mask: polygon đi theo mép ngoài của phần nhìn thấy được, mỗi vật một polygon riêng. Không tô lấn sang nền hay vật bên cạnh. Khe hở nhìn xuyên qua được (giữa hai chân, giữa tay và người) thì không tính vào mask. Chỗ bị vật khác che thì không vẽ, vật ở trước giữ nguyên mask, vật ở sau chỉ lấy phần lộ ra, hai mask không đè lên nhau.
+
+5. Trên bàn bên trái có hai cái bát chạm nhau: `kitchen-006` (bowl 0.528201, box [0.11, 302.85, 85.7, 370.15]) và `kitchen-002` (bowl 0.735744, box [31.44, 343.77, 100.89, 385.55]). Hai box chồng nhau ở khoảng x 31–86, y 344–370. Trường hợp này dùng guideline, vì hai vật chạm nhau gặp rất nhiều và quy tắc ở câu 4 đã giải quyết được (vật trước giữ mask, vật sau lấy phần lộ ra).
+
+   Mask xanh lam lớn ghi `dining table 0.58` ở nửa dưới bên trái `segmentation_prediction.png` (kitchen-005, box [0.97, 234.74, 345.86, 423.87]) đang phủ lên cái bàn gỗ để nhào bột, trên bàn có cây cán bột, khay bánh, hũ mứt. Đây không phải bàn ăn, nhưng COCO-80 không có lớp "bàn bếp" nên `dining table` là lớp gần nhất. Không rõ nên gán `dining table` hay để trống vì vật này không có trong taxonomy. Mask này còn lem xuống cả cái thùng kim loại dưới gầm bàn. Phần lem thì sửa được theo quy tắc ở câu 4, nhưng chuyện có gán lớp `dining table` hay không thì phải escalation cho Lab Coach. Lý do là chọn cách nào cũng phải áp dụng cho mọi ảnh có bàn bếp, đó là quyết định về taxonomy của cả dự án, annotator không tự chọn được.
 
 ## 4. Vòng đời và kiểm tra chất lượng
 
@@ -89,14 +78,14 @@ Nguồn: `segmentation_predictions.json` + `visuals/segmentation_prediction.png`
 
 | Tác vụ | Ground truth trông như thế nào? (đơn vị nhãn) | Lỗi hoặc chỗ khó quyết định bạn thấy trên ảnh/JSON | Annotator làm gì? | Reviewer xem gì? |
 | --- | --- | --- | --- | --- |
-| Phân loại ảnh | **1 nhãn cho cả ảnh**: `class_id` + `class_name` + `taxonomy_name` (vd. `468 / cab / ImageNet-1K`) | Ảnh `traffic` có nhiều bus + car nhưng top-1 là `cab` chỉ với score 0.51; taxonomy ImageNet không có lớp "cảnh giao thông" | Xem cả ảnh, chọn **một** lớp theo tiêu chí chủ thể chính trong guideline; escalation nếu không lớp nào hợp | Lớp chọn có đúng guideline/taxonomy không; các annotator có chọn thống nhất trên ảnh nhiều chủ thể không |
-| Phát hiện vật thể | **1 box/vật**: `class_id`, `class_name`, `bbox_xyxy` (pixel, gốc trên-trái) | `kitchen`: nhãn hai `cup` in đè thành "cucup" dù JSON cho thấy là 2 hộp không giao nhau; `bowl 0.38` và `bowl 0.72` chồng nhau; vật trên kệ gán `bowl 0.46/0.70` có thể là cốc; nồi chảo treo không có lớp COCO nên bị bỏ; `person 0.61` (x_min=0.12) chỉ là cánh tay bị cắt mép; số hộp 17/11/6 tùy ngưỡng | Vẽ box khít phần nhìn thấy cho **mọi** vật thuộc taxonomy (không phụ thuộc ngưỡng), chọn đúng lớp, không vẽ trùng | Box thiếu (vật bị bỏ sót), box thừa/trùng, sai lớp, box lỏng/chật; vật bị che/cắt mép có làm đúng quy tắc không |
-| Instance segmentation | **1 polygon/instance**: `instance_id`, `class_id`, `class_name`, `polygon_xy` (pixel) | `kitchen`: hai bát `kitchen-006` và `kitchen-002` chạm nhau; mask `oven` (`kitchen-007`, 0.49) loang ra ngoài; bàn bếp bị gán `dining table` (`kitchen-005`, 0.58); `person` `kitchen-009` (0.43) chỉ là cánh tay; model seg ra 11 instance, khác tập lớp của model detection ở cùng ngưỡng 0.35 (có thêm spoon, potted plant, dining table; không có cup) | Vẽ polygon theo biên phần nhìn thấy, tách riêng từng instance cùng lớp, không chồng pixel | Biên có bám sát vật không; có lẹm sang nền/vật khác không; mỗi vật có đúng một instance; các ca biên mờ/che khuất có đúng guideline/escalation không |
+| Phân loại ảnh | Một nhãn cho cả ảnh, gồm `class_id`, `class_name`, `taxonomy_name` | Ảnh `traffic` toàn bus và car nhưng top-1 lại là `cab` (0.51). ImageNet không có lớp nào cho cảnh giao thông | Nhìn cả ảnh, chọn một lớp theo quy tắc chọn chủ thể chính; không có lớp phù hợp thì hỏi Lab Coach | Lớp đã chọn có đúng guideline không, các annotator có chọn giống nhau ở ảnh nhiều vật không |
+| Phát hiện vật thể | Mỗi vật một box: `class_id`, `class_name`, `bbox_xyxy` (pixel) | Nhãn hai `cup` in đè thành "cucup" dù là hai box riêng; vật trên kệ bị gán `bowl` nhưng giống cốc; nồi chảo treo trên tường không có lớp trong COCO nên bị bỏ; `person 0.61` chỉ là cánh tay ở mép ảnh; số box là 17/11/6 tùy ngưỡng | Vẽ box khít cho mọi vật thuộc taxonomy, không phụ thuộc ngưỡng của model, chọn đúng lớp, không vẽ trùng | Có vật bị bỏ sót không, có box thừa/trùng không, lớp đúng chưa, box có khít không, vật bị che/cắt mép làm đúng quy tắc chưa |
+| Instance segmentation | Mỗi vật một polygon: `instance_id`, `class_id`, `class_name`, `polygon_xy` (pixel) | Hai bát kitchen-006 và kitchen-002 chạm nhau; mask `oven` (kitchen-007) bị hổng một mảng tối ở góc trên-trái và tràn xuống mép bàn; bàn bếp bị gán `dining table` và mask lem xuống cả thùng kim loại dưới gầm bàn; kitchen-009 chỉ là cánh tay; cùng ngưỡng 0.35 nhưng model seg ra lớp khác model detection (có spoon, potted plant, dining table, không có cup) | Vẽ polygon theo viền phần nhìn thấy, tách riêng từng vật cùng lớp, các mask không đè lên nhau | Viền có bám sát vật không, có lem sang nền/vật khác không, mỗi vật có đúng một instance không, chỗ khó đã làm theo guideline hoặc đã hỏi Lab Coach chưa |
 
 ## 5. An toàn dữ liệu
 
-1. Chỉ dùng ba ảnh COCO công khai mà notebook đã cố định (kiểm tra bằng SHA-256, ghi nguồn/giấy phép trong `IMAGE_ATTRIBUTION.md`); không tải lên ảnh cá nhân, dữ liệu nội bộ hay thông tin cá nhân (họ tên, MSSV, email) vào notebook, báo cáo hoặc output.
-2. Nếu gặp ảnh/dữ liệu không đúng phạm vi (ảnh cá nhân, nhạy cảm, không rõ giấy phép), mình **dừng lại, không xử lý hay commit**, và báo ngay cho **Lab Coach / giảng viên phụ trách**.
+1. Chỉ dùng ba ảnh COCO công khai có sẵn trong notebook, không đưa ảnh cá nhân, dữ liệu nội bộ hay thông tin cá nhân (họ tên, MSSV, email) vào notebook, báo cáo hoặc output.
+2. Nếu gặp ảnh hoặc dữ liệu không đúng phạm vi thì dừng lại, không xử lý hay commit, và báo cho Lab Coach.
 
 ## 6. Checklist trước khi nộp link repo
 
